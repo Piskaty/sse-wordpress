@@ -1,6 +1,7 @@
 <?php
+
 /**
- * Plugin Name: Real-Time SSE
+ * Plugin Name: Real-Time SSE Post Updates
  * Description: Server-Sent Events for real-time post updates
  * Version: 0.1
  */
@@ -17,7 +18,7 @@ class SSE_Post_Updates {
 
     public function __construct() {
         add_action('rest_api_init', array($this, 'register_api_endpoints'));
-        add_action('save_post', array($this, 'store_post_update'), 10, 3);
+        add_action('transition_post_status', array($this, 'handle_post_status_transition'), 10, 3);
         $this->last_check_time = time();
     }
 
@@ -29,30 +30,38 @@ class SSE_Post_Updates {
         ));
     }
 
-    public function store_post_update($post_id, $post, $update) {
-        if ($this->is_updating || wp_is_post_revision($post_id) || wp_is_post_autosave($post_id)) {
+    public function handle_post_status_transition($new_status, $old_status, $post) {
+        if ($this->is_updating || wp_is_post_revision($post->ID) || wp_is_post_autosave($post->ID)) {
             return;
         }
 
         $this->is_updating = true;
 
-        if ($post->post_type === 'post' && $post->post_status === 'publish') {
+        if ($post->post_type === 'post' && $new_status === 'publish') {
+            $update_type = ($old_status !== 'publish') ? 'new' : 'update';
+
             $update = array(
-                'id' => $post_id,
+                'type' => $update_type,
+                'id' => $post->ID,
                 'title' => $post->post_title,
+                'content' => wp_trim_words($post->post_content, 20),
                 'modified' => $post->post_modified,
                 'timestamp' => microtime(true)
             );
 
-            $updates_queue = get_option($this->updates_option, array());
-            array_push($updates_queue, $update);
-            $updates_queue = array_slice($updates_queue, -$this->max_queue_size);
-
-            update_option($this->updates_option, $updates_queue, 'no');
-            wp_cache_delete($this->updates_option, 'options');
+            $this->add_to_queue($update);
         }
 
         $this->is_updating = false;
+    }
+
+    private function add_to_queue($update) {
+        $updates_queue = get_option($this->updates_option, array());
+        array_push($updates_queue, $update);
+        $updates_queue = array_slice($updates_queue, -$this->max_queue_size);
+
+        update_option($this->updates_option, $updates_queue, 'no');
+        wp_cache_delete($this->updates_option, 'options');
     }
 
     public function sse_updates_handler($request) {
@@ -65,14 +74,14 @@ class SSE_Post_Updates {
         while (true) {
             wp_cache_delete($this->updates_option, 'options');
             $updates_queue = get_option($this->updates_option, array());
-            
-            $new_updates = array_filter($updates_queue, function($update) use ($last_sent_timestamp) {
+
+            $new_updates = array_filter($updates_queue, function ($update) use ($last_sent_timestamp) {
                 return $update['timestamp'] > $last_sent_timestamp;
             });
 
             if (!empty($new_updates)) {
                 foreach ($new_updates as $update) {
-                    echo "event: update\n";
+                    echo "event: " . $update['type'] . "\n";
                     echo "data: " . json_encode($update) . "\n\n";
                     $last_sent_timestamp = max($last_sent_timestamp, $update['timestamp']);
                 }
@@ -93,7 +102,7 @@ class SSE_Post_Updates {
                 break;
             }
 
-            usleep(100000); 
+            usleep(100000);
         }
 
         exit;
@@ -102,8 +111,8 @@ class SSE_Post_Updates {
 
 $sse_post_updates = new SSE_Post_Updates();
 
-add_action('wp_enqueue_scripts', function() {
-    wp_enqueue_script('sse-listener', plugin_dir_url(__FILE__) . 'sse-listener.js', array(), '2.3', true);
+add_action('wp_enqueue_scripts', function () {
+    wp_enqueue_script('sse-listener', plugin_dir_url(__FILE__) . 'sse-listener.js', array(), '3.1', true);
     wp_localize_script('sse-listener', 'sseData', array(
         'sseUrl' => rest_url('sse-updates/v1/listen'),
     ));
