@@ -112,7 +112,7 @@ class SSE_Post_Updates {
 $sse_post_updates = new SSE_Post_Updates();
 
 add_action('wp_enqueue_scripts', function () {
-    wp_enqueue_script('sse-listener', plugin_dir_url(__FILE__) . 'sse-listener.js', array(), '3.1', true);
+    wp_enqueue_script('sse-listener', plugin_dir_url(__FILE__) . 'sse-listener.js', array(), '0.1', true);
     wp_localize_script('sse-listener', 'sseData', array(
         'sseUrl' => rest_url('sse-updates/v1/listen'),
     ));
