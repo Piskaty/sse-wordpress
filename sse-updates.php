@@ -1,8 +1,8 @@
 <?php
 /**
- * Plugin Name: Real-Time  SSE
+ * Plugin Name: Real-Time SSE
  * Description: Server-Sent Events for real-time post updates
- * Version: 2.2
+ * Version: 0.1
  */
 
 if (!defined('ABSPATH')) {
@@ -13,10 +13,10 @@ class SSE_Post_Updates {
     private $updates_option = 'sse_post_updates_queue';
     private $last_check_time;
     private $max_queue_size = 1;
+    private $is_updating = false;
 
     public function __construct() {
         add_action('rest_api_init', array($this, 'register_api_endpoints'));
-        add_action('post_updated', array($this, 'store_post_update'), 10, 3);
         add_action('save_post', array($this, 'store_post_update'), 10, 3);
         $this->last_check_time = time();
     }
@@ -29,16 +29,18 @@ class SSE_Post_Updates {
         ));
     }
 
-    public function store_post_update($post_id, $post_after, $post_before) {
-        if (wp_is_post_revision($post_id) || wp_is_post_autosave($post_id)) {
+    public function store_post_update($post_id, $post, $update) {
+        if ($this->is_updating || wp_is_post_revision($post_id) || wp_is_post_autosave($post_id)) {
             return;
         }
 
-        if ($post_after->post_type === 'post' && $post_after->post_status === 'publish') {
+        $this->is_updating = true;
+
+        if ($post->post_type === 'post' && $post->post_status === 'publish') {
             $update = array(
                 'id' => $post_id,
-                'title' => $post_after->post_title,
-                'modified' => $post_after->post_modified,
+                'title' => $post->post_title,
+                'modified' => $post->post_modified,
                 'timestamp' => microtime(true)
             );
 
@@ -49,6 +51,8 @@ class SSE_Post_Updates {
             update_option($this->updates_option, $updates_queue, 'no');
             wp_cache_delete($this->updates_option, 'options');
         }
+
+        $this->is_updating = false;
     }
 
     public function sse_updates_handler($request) {
@@ -89,7 +93,7 @@ class SSE_Post_Updates {
                 break;
             }
 
-            sleep(0.1);
+            usleep(100000); 
         }
 
         exit;
@@ -99,7 +103,7 @@ class SSE_Post_Updates {
 $sse_post_updates = new SSE_Post_Updates();
 
 add_action('wp_enqueue_scripts', function() {
-    wp_enqueue_script('sse-listener', plugin_dir_url(__FILE__) . 'sse-listener.js', array(), '2.2', true);
+    wp_enqueue_script('sse-listener', plugin_dir_url(__FILE__) . 'sse-listener.js', array(), '2.3', true);
     wp_localize_script('sse-listener', 'sseData', array(
         'sseUrl' => rest_url('sse-updates/v1/listen'),
     ));
